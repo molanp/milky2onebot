@@ -1,0 +1,13 @@
+[project]
+dependencies = [
+    "msgspec>=0.21.1",
+]
+description = "Add your description here"
+name = "milky2onebot"
+readme = "README.md"
+requires-python = ">=3.11"
+version = "0.1.0"
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
