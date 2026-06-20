@@ -8,7 +8,7 @@ class MessageEvent(Struct):
     self_id: int
     post_type: Literal["message", "message_sent"]
     message_id: int
-
+# TODO
 #     "time": 1640995200,
 #     "self_id": 123456789,
 #     "post_type": "message",

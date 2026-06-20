@@ -1,6 +1,7 @@
 [project]
 dependencies = [
     "msgspec>=0.21.1",
+    "websockets>=11.0.3",
 ]
 description = "Add your description here"
 name = "milky2onebot"
