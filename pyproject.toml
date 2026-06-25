@@ -1,7 +1,9 @@
 [project]
 dependencies = [
+    "fastapi>=0.138.0",
+    "httpx>=0.28.1",
     "msgspec>=0.21.1",
-    "websockets>=11.0.3",
+    "websockets>=16.0",
 ]
 description = "Add your description here"
 name = "milky2onebot"
