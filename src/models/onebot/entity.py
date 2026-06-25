@@ -1,0 +1,2 @@
+from msgspec import Struct
+
