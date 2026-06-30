@@ -1,6 +1,11 @@
 # milky2onebot
 
-一个将Milky协议转换到Onebot协议的程序
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/5e9651eb-c23d-4e31-89cd-4e2ed709ef68" width="200" alt="Logo" />
+  <p><strong>M2Onebot</strong></p>
+  <p>一个将Milky协议转换到Onebot协议的程序</p>
+</div>
+
 
 本项目基于 Milky 1.2.2 和 Onebot.v11(Lucklilly) 开发
 
