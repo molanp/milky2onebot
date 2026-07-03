@@ -6,17 +6,21 @@
   <p>一个将Milky协议转换到Onebot协议的程序</p>
 </div>
 
-
 本项目基于 Milky 1.2.2 和 Onebot.v11(Lucklilly) 开发
 
 ## 运行
 
 ```shell
-cd src
-python __init__.py
+uv run uvicorn src.gateway:app
 ```
+
 ~~我以后会打包成二进制的~~
 
 ## 兼容性
 
 api太多了，我不知道有没有缺失api，有的话提 issue 我再补
+
+## 已完成的测试
+
+- [x] 消息转发
+- [x] 发送文字消息

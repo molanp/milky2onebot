@@ -1,11 +1,11 @@
 [project]
 dependencies = [
-    "fastapi>=0.138.0",
-    "httpx>=0.28.1",
-    "msgspec>=0.21.1",
-    "ujson>=5.13.0",
-    "uvicorn>=0.49.0",
-    "websockets>=16.0",
+  "fastapi>=0.138.0",
+  "httpx>=0.28.1",
+  "msgspec>=0.21.1",
+  "ujson>=5.13.0",
+  "uvicorn>=0.49.0",
+  "websockets>=16.0",
 ]
 description = "Add your description here"
 name = "milky2onebot"
