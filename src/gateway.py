@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 from websockets import ClientConnection
 import uvicorn
 import ujson
-from converters import (
+from .converters import (
     ACTION_MAP,
     failed,
     get_params,
@@ -266,7 +266,7 @@ class GatewayHub:
             return failed(str(e), retcode=-400, echo=onebot_message.get("echo"))
 
 
-async def source_ws_client_loop():
+async def milky_ws_client_loop():
     ws_url = f"ws://{CONFIG['MILKY_HOST']}:{CONFIG['MILKY_PORT']}/event"
     while True:
         try:
@@ -279,6 +279,7 @@ async def source_ws_client_loop():
                 logging.info("[Milky Ws_Client] Connected to Milky Websocket Server..")
                 if GatewayHub.milky_ready is not None:
                     GatewayHub.milky_ready.set()
+                await GatewayHub.refresh_self_id()
                 async for message in ws:
                     msg_str = (
                         message if isinstance(message, str) else message.decode("utf-8")
@@ -296,7 +297,6 @@ async def onebot_ws_client_loop():
     while True:
         if GatewayHub.milky_ready is not None:
             await GatewayHub.milky_ready.wait()
-        await GatewayHub.refresh_self_id()
         try:
             logging.info(f"[Onebot Ws_Client] Trying to connect {ws_url}..")
             async with websockets.connect(
@@ -353,7 +353,7 @@ async def milky_heartbeat_loop():
             logging.warning(f"[Milky Heartbeat] 心跳循环异常: {e}")
 
 
-async def source_sse_loop():
+async def milky_sse_loop():
     """从 Milky SSE 读取事件并转发给 OneBot"""
     sse_url = f"http://{CONFIG['MILKY_HOST']}:{CONFIG['MILKY_PORT']}/event"
     while True:
@@ -365,6 +365,7 @@ async def source_sse_loop():
                 logging.info("[Milky SSE] 连接 SSE 成功..")
                 if GatewayHub.milky_ready is not None:
                     GatewayHub.milky_ready.set()
+                await GatewayHub.refresh_self_id()
 
                 event_name: str | None = None
                 data_lines: list[str] = []
@@ -398,7 +399,7 @@ async def source_sse_loop():
             await asyncio.sleep(5)
 
 
-async def endpoint_source_webhook(request: Request, background_tasks: BackgroundTasks):
+async def endpoint_milky_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
     background_tasks.add_task(GatewayHub.dispatch_to_onebot, body.decode("utf-8"))
     return {"status": "accepted"}
@@ -426,9 +427,9 @@ async def lifespan(app: FastAPI):
     GatewayHub.milky_ready = asyncio.Event()
 
     if CONFIG["MILKY_TYPE"] == "WEBSOCKET":
-        bg_tasks.append(asyncio.create_task(source_ws_client_loop()))
+        bg_tasks.append(asyncio.create_task(milky_ws_client_loop()))
     elif CONFIG["MILKY_TYPE"] == "SSE":
-        bg_tasks.append(asyncio.create_task(source_sse_loop()))
+        bg_tasks.append(asyncio.create_task(milky_sse_loop()))
     else:
         GatewayHub.milky_ready.set()
 
@@ -453,7 +454,7 @@ if CONFIG["MILKY_TYPE"] == "WEBHOOK":
     logging.info(
         f"[Milky Webhook] 服务地址 http://{CONFIG['HOST']}:{CONFIG['PORT']}/milky/webhook"
     )
-    app.add_api_route("/milky/webhook", endpoint_source_webhook, methods=["POST"])
+    app.add_api_route("/milky/webhook", endpoint_milky_webhook, methods=["POST"])
 
 if CONFIG["ONEBOT_TYPE"] == "WS_SERVER":
     logging.info(

@@ -6,8 +6,8 @@ import json
 import time
 from typing import Any, Awaitable, Literal
 
-from message_convert import msg2cq, normalize_message, milky_segment_to_onebot
-from msgId import UltimateSignedCompressor64
+from .message_convert import msg2cq, normalize_message, milky_segment_to_onebot
+from .msgId import UltimateSignedCompressor64
 
 
 Json = dict[str, Any]
