@@ -1,16 +1,20 @@
 import asyncio
+from collections.abc import Coroutine
+from contextlib import asynccontextmanager
 import logging
 import time
-from contextlib import asynccontextmanager
-from typing import Any
-import httpx
-import websockets
-from fastapi import FastAPI, Request, BackgroundTasks, WebSocket
+from typing import Any, ClassVar
+
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
 from fastapi.websockets import WebSocketState
+import httpx
 from starlette.websockets import WebSocketDisconnect
-from websockets import ClientConnection
-import uvicorn
 import ujson
+import uvicorn
+import websockets
+from websockets import ClientConnection
+
+from .config import load_config
 from .converters import (
     ACTION_MAP,
     failed,
@@ -20,9 +24,11 @@ from .converters import (
     transform_event_async,
 )
 
+SETTINGS = load_config()
+
 
 class ColorFormatter(logging.Formatter):
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",  # 青色
         "INFO": "\033[32m",  # 绿色
         "WARNING": "\033[33m",  # 黄色
@@ -39,30 +45,16 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-handler = logging.StreamHandler()
-handler.setLevel(logging.INFO)
-handler.setFormatter(ColorFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+def setup_logging() -> None:
+    handler = logging.StreamHandler()
+    level = getattr(logging, SETTINGS.logging.level.upper(), logging.INFO)
+    handler.setLevel(level)
+    formatter_cls = ColorFormatter if SETTINGS.logging.color else logging.Formatter
+    handler.setFormatter(formatter_cls("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.basicConfig(level=level, handlers=[handler], force=True)
 
-logging.basicConfig(level=logging.INFO, handlers=[handler])
 
-
-CONFIG = {
-    "HOST": "127.0.0.1",
-    "PORT": 8000,
-    # Milky 支持: "WEBSOCKET", "SSE", "WEBHOOK"
-    "MILKY_TYPE": "WEBSOCKET",
-    "MILKY_HOST": "127.0.0.1",
-    "MILKY_PORT": 3000,
-    "MILKY_ACCESS_TOKEN": "",
-    # OneBot 支持: "WS_CLIENT", "WS_SERVER"
-    "ONEBOT_TYPE": "WS_CLIENT",
-    "ONEBOT_HOST": "127.0.0.1",
-    "ONEBOT_PORT": 8080,
-    "ONEBOT_ACCESS_TOKEN": "",
-    "ONEBOT_HEARTBEAT_INTERVAL": 5,
-    "MILKY_HEARTBEAT_ENABLED": False,
-    "MILKY_HEARTBEAT_INTERVAL": 30,
-}
+setup_logging()
 
 
 class UnifiedWebSocket:
@@ -80,21 +72,39 @@ class UnifiedWebSocket:
 
 
 class GatewayHub:
-    HTTP_CLIENT = httpx.AsyncClient(timeout=10.0)
+    HTTP_CLIENT = httpx.AsyncClient(timeout=SETTINGS.performance.http_timeout)
     onebot_client_ws: UnifiedWebSocket | None = None
-    onebot_server_wss: set[UnifiedWebSocket] = set()
+    onebot_server_wss: ClassVar[set[UnifiedWebSocket]] = set()
+    pending_tasks: ClassVar[set[asyncio.Task[Any]]] = set()
     milky_ready: asyncio.Event | None = None
     self_id: int | None = None
 
     @classmethod
+    def create_task(cls, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+        task = asyncio.create_task(coro)
+        cls.pending_tasks.add(task)
+        task.add_done_callback(cls._drop_task)
+        return task
+
+    @classmethod
+    def _drop_task(cls, task: asyncio.Task[Any]) -> None:
+        cls.pending_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as e:
+            logging.exception(f"后台任务异常: {e}")
+
+    @classmethod
     def milky_auth_headers(cls) -> dict[str, str]:
-        token = CONFIG["MILKY_ACCESS_TOKEN"]
+        token = SETTINGS.milky.access_token
         return {"Authorization": f"Bearer {token}"} if token else {}
 
     @classmethod
     def onebot_header(cls) -> dict[str, str]:
         headers = {}
-        token = CONFIG["ONEBOT_ACCESS_TOKEN"]
+        token = SETTINGS.onebot.access_token
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if cls.self_id is not None:
@@ -106,7 +116,7 @@ class GatewayHub:
         cls, action: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         response = await cls.HTTP_CLIENT.post(
-            f"http://{CONFIG['MILKY_HOST']}:{CONFIG['MILKY_PORT']}/api/{action}",
+            f"{SETTINGS.milky.api_base_url}/{action}",
             json=payload,
             headers=cls.milky_auth_headers(),
         )
@@ -166,12 +176,12 @@ class GatewayHub:
                 "online": cls.milky_ready.is_set() if cls.milky_ready else True,
                 "good": cls.milky_ready.is_set() if cls.milky_ready else True,
             },
-            "interval": int(CONFIG["ONEBOT_HEARTBEAT_INTERVAL"] * 1000),
+            "interval": int(SETTINGS.heartbeat.onebot_interval * 1000),
         }
 
     @classmethod
     async def send_to_onebot(cls, message: dict[str, Any]) -> None:
-        ob_type = CONFIG["ONEBOT_TYPE"]
+        ob_type = SETTINGS.onebot.mode
         if ob_type == "WS_CLIENT" and cls.onebot_client_ws:
             await cls.onebot_client_ws.send_json(message)
         elif ob_type == "WS_SERVER" and cls.onebot_server_wss:
@@ -197,7 +207,7 @@ class GatewayHub:
             return failed(str(e), retcode=-500)
 
         if converted is None:
-            logging.info(f"忽略暂未映射的 Milky 事件: {message.get('event_type')}")
+            logging.warning(f"未知的的 Milky 事件: {message.get('event_type')}")
             return None
 
         message = converted
@@ -267,7 +277,7 @@ class GatewayHub:
 
 
 async def milky_ws_client_loop():
-    ws_url = f"ws://{CONFIG['MILKY_HOST']}:{CONFIG['MILKY_PORT']}/event"
+    ws_url = SETTINGS.milky.ws_event_url
     while True:
         try:
             logging.info(f"[Milky Ws_Client] Trying to connect {ws_url}..")
@@ -289,11 +299,11 @@ async def milky_ws_client_loop():
             if GatewayHub.milky_ready is not None:
                 GatewayHub.milky_ready.clear()
             logging.warning(f"[Milky Ws_Client] Milky Websocket 断开, 5秒后重连: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(SETTINGS.milky.reconnect_interval)
 
 
 async def onebot_ws_client_loop():
-    ws_url = f"ws://{CONFIG['ONEBOT_HOST']}:{CONFIG['ONEBOT_PORT']}/onebot/v11/ws"
+    ws_url = SETTINGS.onebot.ws_url
     while True:
         if GatewayHub.milky_ready is not None:
             await GatewayHub.milky_ready.wait()
@@ -310,13 +320,9 @@ async def onebot_ws_client_loop():
                 )
                 async for message in ws:
                     msg = ujson.loads(
-                        (
-                            message
-                            if isinstance(message, str)
-                            else message.decode("utf-8")
-                        )
+                        message if isinstance(message, str) else message.decode("utf-8")
                     )
-                    asyncio.create_task(
+                    GatewayHub.create_task(
                         GatewayHub.handle_onebot_event_flow(
                             msg, reply_channel=GatewayHub.onebot_client_ws
                         )
@@ -324,13 +330,13 @@ async def onebot_ws_client_loop():
         except Exception as e:
             GatewayHub.onebot_client_ws = None
             logging.warning(f"[Onebot Ws_Client] Onebot Websocket 断开, 5秒后重连: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(SETTINGS.onebot.reconnect_interval)
 
 
 async def onebot_heartbeat_loop():
     while True:
         try:
-            await asyncio.sleep(CONFIG["ONEBOT_HEARTBEAT_INTERVAL"])
+            await asyncio.sleep(SETTINGS.heartbeat.onebot_interval)
             if GatewayHub.milky_ready is not None:
                 await GatewayHub.milky_ready.wait()
             await GatewayHub.send_to_onebot(GatewayHub.build_onebot_heartbeat())
@@ -343,19 +349,19 @@ async def onebot_heartbeat_loop():
 async def milky_heartbeat_loop():
     while True:
         try:
-            await asyncio.sleep(CONFIG["MILKY_HEARTBEAT_INTERVAL"])
+            await asyncio.sleep(SETTINGS.heartbeat.milky_interval)
             if GatewayHub.milky_ready is not None:
                 await GatewayHub.milky_ready.wait()
-            logging.error("[Milky Heartbeat] ? 这个为什么会运行")
+            logging.debug("[Milky Heartbeat] ?!谁让你启动 Milky 心跳的!?")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logging.warning(f"[Milky Heartbeat] 心跳循环异常: {e}")
+            logging.warning(f"[Milky Heartbeat] 心跳发送失败: {e}")
 
 
 async def milky_sse_loop():
     """从 Milky SSE 读取事件并转发给 OneBot"""
-    sse_url = f"http://{CONFIG['MILKY_HOST']}:{CONFIG['MILKY_PORT']}/event"
+    sse_url = SETTINGS.milky.sse_event_url
     while True:
         try:
             logging.info(f"[Milky SSE] 正在连接 Milky SSE {sse_url}...")
@@ -396,7 +402,7 @@ async def milky_sse_loop():
             if GatewayHub.milky_ready is not None:
                 GatewayHub.milky_ready.clear()
             logging.error(f"[Milky SSE] SSE 流中断, 5秒后重连: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(SETTINGS.milky.reconnect_interval)
 
 
 async def endpoint_milky_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -412,7 +418,7 @@ async def endpoint_onebot_reverse_ws(websocket: WebSocket):
     try:
         while True:
             message = await websocket.receive_json()
-            asyncio.create_task(
+            GatewayHub.create_task(
                 GatewayHub.handle_onebot_event_flow(message, reply_channel=adapted_ws)
             )
     except WebSocketDisconnect:
@@ -426,17 +432,18 @@ async def lifespan(app: FastAPI):
     bg_tasks = []
     GatewayHub.milky_ready = asyncio.Event()
 
-    if CONFIG["MILKY_TYPE"] == "WEBSOCKET":
+    if SETTINGS.milky.mode == "WEBSOCKET":
         bg_tasks.append(asyncio.create_task(milky_ws_client_loop()))
-    elif CONFIG["MILKY_TYPE"] == "SSE":
+    elif SETTINGS.milky.mode == "SSE":
         bg_tasks.append(asyncio.create_task(milky_sse_loop()))
     else:
         GatewayHub.milky_ready.set()
 
-    if CONFIG["ONEBOT_TYPE"] == "WS_CLIENT":
+    if SETTINGS.onebot.mode == "WS_CLIENT":
         bg_tasks.append(asyncio.create_task(onebot_ws_client_loop()))
-    bg_tasks.append(asyncio.create_task(onebot_heartbeat_loop()))
-    if CONFIG["MILKY_HEARTBEAT_ENABLED"]:
+    if SETTINGS.heartbeat.onebot_enabled:
+        bg_tasks.append(asyncio.create_task(onebot_heartbeat_loop()))
+    if SETTINGS.heartbeat.milky_enabled:
         bg_tasks.append(asyncio.create_task(milky_heartbeat_loop()))
 
     logging.info("Started..")
@@ -447,18 +454,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    lifespan=lifespan, title="Milky强兼器", host=CONFIG["HOST"], port=CONFIG["PORT"]
+    lifespan=lifespan,
+    title="Milky强兼器",
+    host=SETTINGS.server.host,
+    port=SETTINGS.server.port,
 )
 
-if CONFIG["MILKY_TYPE"] == "WEBHOOK":
+if SETTINGS.milky.mode == "WEBHOOK":
     logging.info(
-        f"[Milky Webhook] 服务地址 http://{CONFIG['HOST']}:{CONFIG['PORT']}/milky/webhook"
+        f"[Milky Webhook] 服务地址 http://{SETTINGS.server.host}:{SETTINGS.server.port}/milky/webhook"
     )
     app.add_api_route("/milky/webhook", endpoint_milky_webhook, methods=["POST"])
 
-if CONFIG["ONEBOT_TYPE"] == "WS_SERVER":
+if SETTINGS.onebot.mode == "WS_SERVER":
     logging.info(
-        f"[Onebot Ws_Client] 服务地址 http://{CONFIG['HOST']}:{CONFIG['PORT']}/onebot/v11/ws"
+        f"[Onebot Ws_Client] 服务地址 http://{SETTINGS.server.host}:{SETTINGS.server.port}/onebot/v11/ws"
     )
     app.add_api_websocket_route("/onebot/v11/ws", endpoint_onebot_reverse_ws)
 
@@ -469,4 +479,4 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app)
+    uvicorn.run(app, host=SETTINGS.server.host, port=SETTINGS.server.port)

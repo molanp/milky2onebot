@@ -2,7 +2,6 @@ from typing import Literal
 
 
 class UltimateSignedCompressor64:
-
     INT64_MIN = -9223372036854775808
     INT64_MAX = 9223372036854775807
     PEER_BITS = 40
@@ -26,22 +25,16 @@ class UltimateSignedCompressor64:
             raise ValueError("ID 和 Seq 必须为正整数")
 
         if peer_id >= (1 << cls.PEER_BITS):
-            raise ValueError(
-                f"peer_id ({peer_id}) 超过 12 位 (最大支持 1.09万亿)"
-            )
+            raise ValueError(f"peer_id ({peer_id}) 超过 12 位 (最大支持 1.09万亿)")
 
         if message_scene == "group":
             if message_seq >= (1 << 23):
-                raise ValueError(
-                    "group 场景下 message_seq 超过 838 万"
-                )
+                raise ValueError("group 场景下 message_seq 超过 838 万")
             unsigned_res = (0 << 63) | (peer_id << 23) | message_seq
 
         elif message_scene in {"friend", "temp"}:
             if message_seq >= (1 << 22):
-                raise ValueError(
-                    f"{message_scene} 场景下 message_seq 超过 419 万"
-                )
+                raise ValueError(f"{message_scene} 场景下 message_seq 超过 419 万")
 
             scene_bit = 0 if message_scene == "friend" else 1
             unsigned_res = (1 << 63) | (scene_bit << 62) | (peer_id << 22) | message_seq
@@ -88,8 +81,4 @@ if __name__ == "__main__":
     for case in test_cases:
         code = UltimateSignedCompressor64.compress(**case)
         decoded = UltimateSignedCompressor64.decompress(code)
-
-        print(
-            f"scene: {case['message_scene']:<6} | peer_id: {case['peer_id']:<14} | int64: {code:<20}"
-        )
         assert case == decoded

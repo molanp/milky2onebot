@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
-from typing import Any, Callable, Literal
-
+from typing import Any, Literal
 
 Json = dict[str, Any]
 MessageIdBuilder = Callable[[Literal["group", "friend", "temp"], int, int], int]

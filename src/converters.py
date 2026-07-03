@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import json
 import time
-from typing import Any, Awaitable, Literal
+from typing import Any, Literal
 
-from .message_convert import msg2cq, normalize_message, milky_segment_to_onebot
+from .message_convert import milky_segment_to_onebot, msg2cq, normalize_message
 from .msgId import UltimateSignedCompressor64
-
 
 Json = dict[str, Any]
 ParamConverter = Callable[[Json], Json]
@@ -345,7 +345,9 @@ def incoming_message_to_onebot(message: Json, self_id: int | None = None) -> Jso
     sender_id: int = message["sender_id"]
     message_id = message_id_from_milky(scene, peer_id, message_seq)
     segments = [
-        milky_segment_to_onebot(seg, message_id_from_milky,scene=scene, peer_id=peer_id)
+        milky_segment_to_onebot(
+            seg, message_id_from_milky, scene=scene, peer_id=peer_id
+        )
         for seg in message["segments"]
     ]
 
@@ -389,13 +391,23 @@ async def resolve_message_file_urls(
 
     scene: Literal["group", "friend", "temp"] = message["message_scene"]
     peer_id: int = message["peer_id"]
+    pending: list[Json] = []
     for segment in message.get("segments", []):
         if segment.get("type") != "file":
             continue
         data = segment.get("data") or {}
         if data.get("download_url") or data.get("temp_url"):
             continue
-        data["download_url"] = await file_url_resolver(scene, peer_id, data)
+        pending.append(data)
+
+    if not pending:
+        return message
+
+    urls = await asyncio.gather(
+        *(file_url_resolver(scene, peer_id, data) for data in pending)
+    )
+    for data, url in zip(pending, urls):
+        data["download_url"] = url
     return message
 
 
@@ -715,7 +727,7 @@ async def transform_event_async(
             "sub_type": "poke",
             "user_id": data["user_id"],
             "target_id": target_id,
-            "raw_info": f'<gtip align="center"> <qq uin="{data["user_id"]}" col="1" nm="" /> <img src="{data["display_action_img_url"]}"/> <nor txt="{data["display_action"]}"/> <qq uin="{target_id}" col="1" nm="" tp="0"/>  <nor txt="{data["display_suffix"]}"/> </gtip>',
+            "raw_info": f'<gtip align="center"> <qq uin="{data["user_id"]}" col="1" nm="" /> <img src="{data["display_action_img_url"]}"/> <nor txt="{data["display_action"]}"/> <qq uin="{target_id}" col="1" nm="" tp="0"/>  <nor txt="{data["display_suffix"]}"/> </gtip>',  # noqa: E501
         }
     if event_type == "group_nudge":
         return {
@@ -727,7 +739,7 @@ async def transform_event_async(
             "group_id": data["group_id"],
             "user_id": data["sender_id"],
             "target_id": data["receiver_id"],
-            "raw_info": f'<gtip align="center"> <qq uin="{data["sender_id"]}" col="1" nm="" /> <img src="{data["display_action_img_url"]}"/> <nor txt="{data["display_action"]}"/> <qq uin="{data["receiver_id"]}" col="1" nm="" tp="0"/>  <nor txt="{data["display_suffix"]}"/> </gtip>',
+            "raw_info": f'<gtip align="center"> <qq uin="{data["sender_id"]}" col="1" nm="" /> <img src="{data["display_action_img_url"]}"/> <nor txt="{data["display_action"]}"/> <qq uin="{data["receiver_id"]}" col="1" nm="" tp="0"/>  <nor txt="{data["display_suffix"]}"/> </gtip>',  # noqa: E501
         }
     if event_type == "friend_file_upload":
         # HACK: Onebot 无事件, 这里按照理论格式写

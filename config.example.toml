@@ -1,0 +1,34 @@
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[logging]
+level = "INFO"
+color = true
+
+[milky]
+# 支持: "WEBSOCKET", "SSE", "WEBHOOK"
+mode = "WEBSOCKET"
+host = "127.0.0.1"
+port = 3000
+access_token = ""
+reconnect_interval = 5.0
+
+[onebot]
+# 支持: "WS_CLIENT", "WS_SERVER"
+mode = "WS_CLIENT"
+host = "127.0.0.1"
+port = 8080
+access_token = ""
+reconnect_interval = 5.0
+
+[heartbeat.onebot]
+enabled = true
+interval = 5.0
+
+[heartbeat.milky]
+enabled = false
+interval = 30.0
+
+[performance]
+http_timeout = 10.0

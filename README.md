@@ -10,11 +10,36 @@
 
 ## 运行
 
+复制示例配置：
+
+```shell
+copy config.example.toml config.toml
+```
+
+也可以用环境变量指定配置路径：
+
+```shell
+set M2OB_CONFIG=D:\path\to\config.toml
+```
+
 ```shell
 uv run uvicorn src.gateway:app
 ```
 
 ~~我以后会打包成二进制的~~
+
+## 配置
+
+配置文件使用 TOML，默认读取当前工作目录下的 `config.toml`。配置按用途分为：
+
+- `[server]`: 本服务监听地址。
+- `[milky]`: Milky 连接方式、地址、token 和重连间隔。
+- `[onebot]`: OneBot 连接方式、地址、token 和重连间隔。
+- `[heartbeat.onebot]`: OneBot v11 心跳配置。
+- `[heartbeat.milky]`: Milky 预留心跳配置，默认关闭。
+- `[performance]`: 超时相关设置。
+
+所有关键配置都可以用 `M2OB_` 前缀环境变量覆盖，例如 `M2OB_MILKY_HOST`、`M2OB_ONEBOT_PORT`。
 
 ## 兼容性
 
