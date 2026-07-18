@@ -47,5 +47,7 @@ api太多了，我不知道有没有缺失api，有的话提 issue 我再补
 
 ## 已完成的测试
 
+本项目使用 [zhongwen-4-fraq-plugins/Matcha-for-Milky](https://github.com/zhongwen-4-fraq-plugins/Matcha-for-Milky) 进行测试
+
 - [x] 消息转发
 - [x] 发送文字消息
