@@ -6,7 +6,6 @@ import time
 from typing import Any, ClassVar
 
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
-from fastapi.websockets import WebSocketState
 import httpx
 from starlette.websockets import WebSocketDisconnect
 import ujson
@@ -14,7 +13,7 @@ import uvicorn
 import websockets
 from websockets import ClientConnection
 
-from .config import load_config
+from .config import APP_LOGGER_NAME, load_config
 from .converters import (
     ACTION_MAP,
     failed,
@@ -25,6 +24,19 @@ from .converters import (
 )
 
 SETTINGS = load_config()
+LOGGER = logging.getLogger(f"{APP_LOGGER_NAME}.gateway")
+SILENCED_LOGGERS = (
+    "asyncio",
+    "fastapi",
+    "httpcore",
+    "httpx",
+    "multipart",
+    "starlette",
+    "uvicorn",
+    "uvicorn.access",
+    "uvicorn.error",
+    "websockets",
+)
 
 
 class ColorFormatter(logging.Formatter):
@@ -38,20 +50,57 @@ class ColorFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     def format(self, record: logging.LogRecord) -> str:
+        original_levelname = record.levelname
         level_name = record.levelname
         color = self.COLORS.get(level_name, "")
         record.levelname = f"{color}{level_name}{self.RESET}"
-        record.msg = f"\033[37m{record.msg}{self.RESET}"
-        return super().format(record)
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original_levelname
 
 
 def setup_logging() -> None:
     handler = logging.StreamHandler()
-    level = getattr(logging, SETTINGS.logging.level.upper(), logging.INFO)
-    handler.setLevel(level)
+    app_level = getattr(logging, SETTINGS.logging.level.upper(), logging.INFO)
+    handler.setLevel(app_level)
     formatter_cls = ColorFormatter if SETTINGS.logging.color else logging.Formatter
-    handler.setFormatter(formatter_cls("%(asctime)s [%(levelname)s] %(message)s"))
-    logging.basicConfig(level=level, handlers=[handler], force=True)
+    message_format = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+    if SETTINGS.logging.color:
+        message_format = (
+            "%(asctime)s [%(levelname)s] [%(name)s] \033[37m%(message)s\033[0m"
+        )
+    handler.setFormatter(formatter_cls(message_format))
+
+    app_logger = logging.getLogger(APP_LOGGER_NAME)
+    app_logger.handlers.clear()
+    app_logger.addHandler(handler)
+    app_logger.setLevel(app_level)
+    app_logger.disabled = False
+    app_logger.propagate = False
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(logging.NullHandler())
+    root_logger.setLevel(logging.CRITICAL + 1)
+
+    for logger_name, logger in logging.root.manager.loggerDict.items():
+        if not isinstance(logger, logging.Logger):
+            continue
+        if logger_name == APP_LOGGER_NAME or logger_name.startswith(
+            f"{APP_LOGGER_NAME}."
+        ):
+            logger.disabled = False
+            continue
+        logger.handlers.clear()
+        logger.propagate = False
+        logger.disabled = True
+
+    for logger_name in SILENCED_LOGGERS:
+        logger = logging.getLogger(logger_name)
+        logger.handlers.clear()
+        logger.propagate = False
+        logger.disabled = True
 
 
 setup_logging()
@@ -64,7 +113,7 @@ class UnifiedWebSocket:
     async def send(self, text: str):
         if isinstance(self.raw_ws, ClientConnection):
             await self.raw_ws.send(text)
-        elif self.raw_ws.client_state == WebSocketState.CONNECTED:
+        else:
             await self.raw_ws.send_text(text)
 
     async def send_json(self, json: dict[str, Any]):
@@ -94,7 +143,7 @@ class GatewayHub:
         try:
             task.result()
         except Exception as e:
-            logging.exception(f"后台任务异常: {e}")
+            LOGGER.exception(f"后台任务异常: {e}")
 
     @classmethod
     def milky_auth_headers(cls) -> dict[str, str]:
@@ -115,26 +164,68 @@ class GatewayHub:
     async def call_milky_api(
         cls, action: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        response = await cls.HTTP_CLIENT.post(
-            f"{SETTINGS.milky.api_base_url}/{action}",
-            json=payload,
-            headers=cls.milky_auth_headers(),
+        method = "POST"
+        try:
+            response = await cls.HTTP_CLIENT.post(
+                f"{SETTINGS.milky.api_base_url}/{action}",
+                json=payload,
+                headers=cls.milky_auth_headers(),
+            )
+        except Exception:
+            LOGGER.exception(
+                "[Milky API] method=%s router=%s response_status=request_error",
+                method,
+                action,
+            )
+            raise
+
+        try:
+            result = response.json()
+        except Exception:
+            LOGGER.error(
+                "[Milky API] method=%s router=%s http_status=%s "
+                "response_status=invalid_json data=%s",
+                method,
+                action,
+                response.status_code,
+                response.text,
+            )
+            response.raise_for_status()
+            raise
+
+        if not isinstance(result, dict):
+            LOGGER.error(
+                "[Milky API] method=%s router=%s http_status=%s "
+                "response_status=invalid_payload",
+                method,
+                action,
+                response.status_code,
+            )
+            raise ValueError("Milky API response must be an object")
+
+        LOGGER.info(
+            "[Milky API] method=%s router=%s http_status=%s status=%s retcode=%s",
+            method,
+            action,
+            response.status_code,
+            result.get("status"),
+            result.get("retcode"),
         )
         response.raise_for_status()
-        return response.json()
+        return result
 
     @classmethod
     async def refresh_self_id(cls) -> int | None:
         try:
             response = await cls.call_milky_api("get_login_info", {})
         except Exception as e:
-            logging.warning(f"获取 Milky 登录信息失败，暂无法设置 X-Self-ID: {e}")
+            LOGGER.warning(f"获取 Milky 登录信息失败，暂无法设置 X-Self-ID: {e}")
             return cls.self_id
         if response.get("status") == "ok" and response.get("retcode") == 0:
             cls.self_id = int(response["data"]["uin"])
-            logging.info(f"已获取 X-Self-ID: {cls.self_id}")
+            LOGGER.info(f"已获取 X-Self-ID: {cls.self_id}")
         else:
-            logging.warning(f"获取 Milky 登录信息失败: {response}")
+            LOGGER.warning(f"获取 Milky 登录信息失败: {response}")
         return cls.self_id
 
     @classmethod
@@ -157,12 +248,13 @@ class GatewayHub:
                     },
                 )
             else:
+                LOGGER.warning(f"获取文件下载链接失败，缺少 file_hash: {file_data}")
                 return None
             if response.get("status") == "ok" and response.get("retcode") == 0:
                 return response.get("data", {}).get("download_url")
-            logging.warning(f"获取文件下载链接失败: {response}")
+            LOGGER.warning(f"获取文件下载链接失败: {response}")
         except Exception as e:
-            logging.warning(f"获取文件下载链接异常: {e}")
+            LOGGER.warning(f"获取文件下载链接异常: {e}")
         return None
 
     @classmethod
@@ -199,15 +291,16 @@ class GatewayHub:
             message = raw_message
 
         try:
+            LOGGER.info(f"Received Milky message: {message['event_type']} {message}")
             converted = await transform_event_async(
                 message, file_url_resolver=cls.resolve_file_url
             )
         except Exception as e:
-            logging.exception(f"Milky 事件转换失败: {e}")
+            LOGGER.exception(f"Milky 事件转换失败: {e}")
             return failed(str(e), retcode=-500)
 
         if converted is None:
-            logging.warning(f"未知的的 Milky 事件: {message.get('event_type')}")
+            LOGGER.warning(f"未知的的 Milky 事件: {message.get('event_type')}")
             return None
 
         message = converted
@@ -232,21 +325,26 @@ class GatewayHub:
                 return
             try:
                 milky_response = await cls.call_milky_api(milky_router, milky_params)
-            except Exception:
+            except Exception as e:
                 await reply_channel.send_json(
                     failed(
                         "Milky API request failed",
                         retcode=-502,
                         echo=echo,
+                        data=str(e)
                     )
                 )
                 return
-            onebot_response = transform_action_response(
-                milky_response, mapping, source_params, echo=echo
+            onebot_response = await transform_action_response(
+                milky_response,
+                mapping,
+                source_params,
+                echo=echo,
+                file_url_resolver=cls.resolve_file_url,
             )
             await reply_channel.send_json(onebot_response)
         except Exception as e:
-            logging.exception(f"中转 OneBot API 调用失败: {e}")
+            LOGGER.exception(f"中转 OneBot API 调用失败: {e}")
             await reply_channel.send_json(failed(str(e), retcode=-500, echo=echo))
             return
 
@@ -280,16 +378,17 @@ async def milky_ws_client_loop():
     ws_url = SETTINGS.milky.ws_event_url
     while True:
         try:
-            logging.info(f"[Milky Ws_Client] Trying to connect {ws_url}..")
+            LOGGER.info(f"[Milky Ws_Client] Trying to connect {ws_url}..")
             async with websockets.connect(
                 ws_url,
                 ping_interval=20,
+                max_size=SETTINGS.performance.websocket_max_size,
                 additional_headers=GatewayHub.milky_auth_headers(),
             ) as ws:
-                logging.info("[Milky Ws_Client] Connected to Milky Websocket Server..")
+                LOGGER.info("[Milky Ws_Client] Connected to Milky Websocket Server..")
+                await GatewayHub.refresh_self_id()
                 if GatewayHub.milky_ready is not None:
                     GatewayHub.milky_ready.set()
-                await GatewayHub.refresh_self_id()
                 async for message in ws:
                     msg_str = (
                         message if isinstance(message, str) else message.decode("utf-8")
@@ -298,7 +397,7 @@ async def milky_ws_client_loop():
         except Exception as e:
             if GatewayHub.milky_ready is not None:
                 GatewayHub.milky_ready.clear()
-            logging.warning(f"[Milky Ws_Client] Milky Websocket 断开, 5秒后重连: {e}")
+            LOGGER.warning(f"[Milky Ws_Client] Milky Websocket 断开, 5秒后重连: {e}")
             await asyncio.sleep(SETTINGS.milky.reconnect_interval)
 
 
@@ -308,16 +407,15 @@ async def onebot_ws_client_loop():
         if GatewayHub.milky_ready is not None:
             await GatewayHub.milky_ready.wait()
         try:
-            logging.info(f"[Onebot Ws_Client] Trying to connect {ws_url}..")
+            LOGGER.info(f"[Onebot Ws_Client] Trying to connect {ws_url}..")
             async with websockets.connect(
                 ws_url,
                 ping_interval=20,
+                max_size=SETTINGS.performance.websocket_max_size,
                 additional_headers=GatewayHub.onebot_header(),
             ) as ws:
                 GatewayHub.onebot_client_ws = UnifiedWebSocket(ws)
-                logging.info(
-                    "[Onebot Ws_Client] Connected to Onebot Websocket Server.."
-                )
+                LOGGER.info("[Onebot Ws_Client] Connected to Onebot Websocket Server..")
                 async for message in ws:
                     msg = ujson.loads(
                         message if isinstance(message, str) else message.decode("utf-8")
@@ -329,7 +427,7 @@ async def onebot_ws_client_loop():
                     )
         except Exception as e:
             GatewayHub.onebot_client_ws = None
-            logging.warning(f"[Onebot Ws_Client] Onebot Websocket 断开, 5秒后重连: {e}")
+            LOGGER.warning(f"[Onebot Ws_Client] Onebot Websocket 断开, 5秒后重连: {e}")
             await asyncio.sleep(SETTINGS.onebot.reconnect_interval)
 
 
@@ -343,7 +441,7 @@ async def onebot_heartbeat_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logging.warning(f"[Onebot Heartbeat] 心跳发送失败: {e}")
+            LOGGER.warning(f"[Onebot Heartbeat] 心跳发送失败: {e}")
 
 
 async def milky_heartbeat_loop():
@@ -352,11 +450,11 @@ async def milky_heartbeat_loop():
             await asyncio.sleep(SETTINGS.heartbeat.milky_interval)
             if GatewayHub.milky_ready is not None:
                 await GatewayHub.milky_ready.wait()
-            logging.debug("[Milky Heartbeat] ?!谁让你启动 Milky 心跳的!?")
+            LOGGER.error("[Milky Heartbeat] ?!谁让你启动 Milky 心跳的!?")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logging.warning(f"[Milky Heartbeat] 心跳发送失败: {e}")
+            LOGGER.warning(f"[Milky Heartbeat] 心跳发送失败: {e}")
 
 
 async def milky_sse_loop():
@@ -364,11 +462,11 @@ async def milky_sse_loop():
     sse_url = SETTINGS.milky.sse_event_url
     while True:
         try:
-            logging.info(f"[Milky SSE] 正在连接 Milky SSE {sse_url}...")
+            LOGGER.info(f"[Milky SSE] 正在连接 Milky SSE {sse_url}...")
             async with GatewayHub.HTTP_CLIENT.stream(
                 "GET", sse_url, headers=GatewayHub.milky_auth_headers()
             ) as response:
-                logging.info("[Milky SSE] 连接 SSE 成功..")
+                LOGGER.info("[Milky SSE] 连接 SSE 成功..")
                 if GatewayHub.milky_ready is not None:
                     GatewayHub.milky_ready.set()
                 await GatewayHub.refresh_self_id()
@@ -385,7 +483,7 @@ async def milky_sse_loop():
                     if line == "":
                         if data_lines:
                             data_str = "\n".join(data_lines)
-                            logging.info(f"[Milky SSE] Received event: {event_name}")
+                            LOGGER.info(f"[Milky SSE] Received event: {event_name}")
                             await GatewayHub.dispatch_to_onebot(data_str)
                         event_name = None
                         data_lines = []
@@ -401,7 +499,7 @@ async def milky_sse_loop():
         except Exception as e:
             if GatewayHub.milky_ready is not None:
                 GatewayHub.milky_ready.clear()
-            logging.error(f"[Milky SSE] SSE 流中断, 5秒后重连: {e}")
+            LOGGER.error(f"[Milky SSE] SSE 流中断, 5秒后重连: {e}")
             await asyncio.sleep(SETTINGS.milky.reconnect_interval)
 
 
@@ -429,6 +527,7 @@ async def endpoint_onebot_reverse_ws(websocket: WebSocket):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     bg_tasks = []
     GatewayHub.milky_ready = asyncio.Event()
 
@@ -446,8 +545,9 @@ async def lifespan(app: FastAPI):
     if SETTINGS.heartbeat.milky_enabled:
         bg_tasks.append(asyncio.create_task(milky_heartbeat_loop()))
 
-    logging.info("Started..")
+    LOGGER.info("Started..")
     yield
+    LOGGER.info("Stopping..")
     for task in bg_tasks:
         task.cancel()
     await GatewayHub.HTTP_CLIENT.aclose()
@@ -461,22 +561,23 @@ app = FastAPI(
 )
 
 if SETTINGS.milky.mode == "WEBHOOK":
-    logging.info(
+    LOGGER.info(
         f"[Milky Webhook] 服务地址 http://{SETTINGS.server.host}:{SETTINGS.server.port}/milky/webhook"
     )
     app.add_api_route("/milky/webhook", endpoint_milky_webhook, methods=["POST"])
 
 if SETTINGS.onebot.mode == "WS_SERVER":
-    logging.info(
+    LOGGER.info(
         f"[Onebot Ws_Client] 服务地址 http://{SETTINGS.server.host}:{SETTINGS.server.port}/onebot/v11/ws"
     )
     app.add_api_websocket_route("/onebot/v11/ws", endpoint_onebot_reverse_ws)
 
 
-@app.get("/health")
-async def health():
-    return {"status": "running"}
-
-
 if __name__ == "__main__":
-    uvicorn.run(app, host=SETTINGS.server.host, port=SETTINGS.server.port)
+    uvicorn.run(
+        app,
+        host=SETTINGS.server.host,
+        port=SETTINGS.server.port,
+        log_config=None,
+        access_log=False,
+    )

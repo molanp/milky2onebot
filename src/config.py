@@ -8,6 +8,7 @@ from typing import Any
 import tomllib
 
 DEFAULT_CONFIG_PATH = Path.cwd() / "config.toml"
+APP_LOGGER_NAME = "M2O"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class HeartbeatConfig:
 @dataclass(frozen=True)
 class PerformanceConfig:
     http_timeout: float = 10.0
+    websocket_max_size: int = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -160,6 +162,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> None:
         "M2OB_MILKY_HEARTBEAT_ENABLED": ("heartbeat.milky", "enabled", _bool),
         "M2OB_MILKY_HEARTBEAT_INTERVAL": ("heartbeat.milky", "interval", float),
         "M2OB_HTTP_TIMEOUT": ("performance", "http_timeout", float),
+        "M2OB_WEBSOCKET_MAX_SIZE": ("performance", "websocket_max_size", int),
     }
     for env_name, (section_path, key, caster) in overrides.items():
         if env_name not in os.environ:

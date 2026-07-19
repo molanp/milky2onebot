@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 import re
 from typing import Any, Literal
 
+from .config import APP_LOGGER_NAME
+
+LOGGER = logging.getLogger(f"{APP_LOGGER_NAME}.message_convert")
 Json = dict[str, Any]
 MessageIdBuilder = Callable[[Literal["group", "friend", "temp"], int, int], int]
 MessageIdParser = Callable[[int], Json]
@@ -55,10 +59,13 @@ def normalize_message(
     message: Any, message_id_parser: MessageIdParser | None = None
 ) -> list[Json]:
     if isinstance(message, str):
-        return cq2msg(message)
-    if isinstance(message, list):
-        return [onebot_segment_to_milky(seg, message_id_parser) for seg in message]
-    return [onebot_segment_to_milky(message, message_id_parser)]
+        result = cq2msg(message)
+    elif isinstance(message, list):
+        result = [onebot_segment_to_milky(seg, message_id_parser) for seg in message]
+    else:
+        result = [onebot_segment_to_milky(message, message_id_parser)]
+    LOGGER.debug("[Milky] 转换 Onebot 消息: %s", message)
+    return result
 
 
 def onebot_segment_to_milky(
