@@ -8,7 +8,7 @@ import time
 from typing import Any, Literal
 
 from .message_convert import milky_segment_to_onebot, msg2cq, normalize_message
-from .msgId import UltimateSignedCompressor64
+from .msgId import UltimateSignedCompressor
 
 Json = dict[str, Any]
 ParamConverter = Callable[[Json], Json]
@@ -29,6 +29,7 @@ class ActionMapping:
     params: ParamConverter
     data: DataConverter | None = None
     local_response: LocalResponder | None = None
+    resolve_file_urls: bool = False
 
     def resolve_action(self, params: Json) -> str:
         if callable(self.milky_action):
@@ -102,11 +103,11 @@ def decode_flag(flag: Any) -> Json:
 def message_id_from_milky(
     scene: Literal["group", "friend", "temp"], peer_id: int, message_seq: int
 ) -> int:
-    return UltimateSignedCompressor64.compress(scene, peer_id, message_seq)
+    return UltimateSignedCompressor.compress(scene, peer_id, message_seq)
 
 
 def parse_message_id(message_id: int) -> Json:
-    return UltimateSignedCompressor64.decompress(message_id)
+    return UltimateSignedCompressor.decompress(message_id)
 
 
 def get_params(message: Json) -> Json:
@@ -391,24 +392,47 @@ async def resolve_message_file_urls(
 
     scene: Literal["group", "friend", "temp"] = message["message_scene"]
     peer_id: int = message["peer_id"]
-    pending: list[Json] = []
+    pending: list[tuple[Json, Json]] = []
     for segment in message.get("segments", []):
         if segment.get("type") != "file":
             continue
-        data = segment.get("data") or {}
+        data = segment.get("data")
+        if not isinstance(data, dict):
+            continue
         if data.get("download_url") or data.get("temp_url"):
             continue
-        pending.append(data)
+        pending.append((segment, data))
 
     if not pending:
         return message
 
     urls = await asyncio.gather(
-        *(file_url_resolver(scene, peer_id, data) for data in pending)
+        *(file_url_resolver(scene, peer_id, data) for _, data in pending)
     )
-    for data, url in zip(pending, urls):
-        data["download_url"] = url
+    for (segment, data), url in zip(pending, urls):
+        segment["data"] = {**data, "download_url": url}
     return message
+
+
+async def resolve_action_file_urls(
+    data: Any, file_url_resolver: FileUrlResolver | None = None
+) -> Any:
+    if file_url_resolver is None or not isinstance(data, dict):
+        return data
+
+    messages: list[Json] = []
+    message = data.get("message")
+    if isinstance(message, dict):
+        messages.append(message)
+    history = data.get("messages")
+    if isinstance(history, list):
+        messages.extend(item for item in history if isinstance(item, dict))
+
+    if messages:
+        await asyncio.gather(
+            *(resolve_message_file_urls(item, file_url_resolver) for item in messages)
+        )
+    return data
 
 
 async def incoming_message_to_onebot_async(
@@ -446,8 +470,12 @@ def onebot_status(_: Json) -> Json:
     }
 
 
-def transform_action_response(
-    milky_response: Json, mapping: ActionMapping, params: Json, echo: Any = None
+async def transform_action_response(
+    milky_response: Json,
+    mapping: ActionMapping,
+    params: Json,
+    echo: Any = None,
+    file_url_resolver: FileUrlResolver | None = None,
 ) -> Json:
     status = milky_response["status"]
     retcode = milky_response["retcode"]
@@ -460,6 +488,8 @@ def transform_action_response(
         )
 
     data = milky_response.get("data", {})
+    if mapping.resolve_file_urls:
+        data = await resolve_action_file_urls(data, file_url_resolver)
     if mapping.data is not None:
         try:
             data = mapping.data(data, params)
@@ -484,7 +514,9 @@ ACTION_MAP: dict[str, ActionMapping] = {
     ),
     "send_msg": ActionMapping(send_msg_action, send_msg_params, send_message_data),
     "delete_msg": ActionMapping(delete_msg_action, delete_msg_params),
-    "get_msg": ActionMapping("get_message", message_id_params, get_message_data),
+    "get_msg": ActionMapping(
+        "get_message", message_id_params, get_message_data, resolve_file_urls=True
+    ),
     "mark_msg_as_read": ActionMapping("mark_message_as_read", message_id_params),
     "get_login_info": ActionMapping(
         "get_login_info",
@@ -614,10 +646,16 @@ ACTION_MAP: dict[str, ActionMapping] = {
         "send_group_message_reaction", unset_group_reaction_params
     ),
     "get_friend_msg_history": ActionMapping(
-        "get_history_messages", history_params("friend", "user_id"), history_data
+        "get_history_messages",
+        history_params("friend", "user_id"),
+        history_data,
+        resolve_file_urls=True,
     ),
     "get_group_msg_history": ActionMapping(
-        "get_history_messages", history_params("group", "group_id"), history_data
+        "get_history_messages",
+        history_params("group", "group_id"),
+        history_data,
+        resolve_file_urls=True,
     ),
     "fetch_custom_face": ActionMapping(
         "get_custom_face_url_list", empty_params, lambda data: [data["urls"]]
