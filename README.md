@@ -1,10 +1,13 @@
 # milky2onebot
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/5e9651eb-c23d-4e31-89cd-4e2ed709ef68" width="200" alt="Logo" />
+  <img src="https://github.com/user-attachments/assets/100ea02c-3c94-42d6-b8a8-149617bd744c" width="200" alt="Logo" />
   <p><strong>M2Onebot</strong></p>
   <p>一个将Milky协议转换到Onebot协议的程序</p>
+  <small>小孩子不懂事写着玩的</small>
 </div>
+
+___
 
 本项目基于 Milky 1.2.2 和 Onebot.v11(Lucklilly) 开发
 
