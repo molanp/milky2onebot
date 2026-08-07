@@ -50,7 +50,8 @@ jobs:
           --with setuptools==80.9.0
           --with pillow==11.3.0
           pyinstaller --noconfirm --clean --onefile
-          --name milky2onebot --icon logo.jpg main.py
+          --name milky2onebot --icon logo.jpg
+          --collect-data certifi main.py
 
       - name: Package Unix executable
         if: runner.os != 'Windows'

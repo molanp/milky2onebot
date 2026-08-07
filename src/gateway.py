@@ -2,9 +2,12 @@ import asyncio
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 import logging
+import os
+import ssl
 import time
 from typing import Any, ClassVar
 
+import certifi
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket
 import httpx
 from starlette.websockets import WebSocketDisconnect
@@ -106,6 +109,22 @@ def setup_logging() -> None:
 setup_logging()
 
 
+def create_ssl_context() -> ssl.SSLContext:
+    cert_file = os.getenv("SSL_CERT_FILE")
+    if cert_file and os.path.isfile(cert_file):
+        return ssl.create_default_context(cafile=cert_file)
+
+    cert_dir = os.getenv("SSL_CERT_DIR")
+    if cert_dir and os.path.isdir(cert_dir):
+        return ssl.create_default_context(capath=cert_dir)
+
+    try:
+        return ssl.create_default_context(cadata=certifi.contents())
+    except FileNotFoundError:
+        LOGGER.warning("内置 CA 证书不可用，回退到系统证书库")
+        return ssl.create_default_context()
+
+
 class UnifiedWebSocket:
     def __init__(self, raw_ws: ClientConnection | WebSocket):
         self.raw_ws = raw_ws
@@ -121,7 +140,10 @@ class UnifiedWebSocket:
 
 
 class GatewayHub:
-    HTTP_CLIENT = httpx.AsyncClient(timeout=SETTINGS.performance.http_timeout)
+    HTTP_CLIENT = httpx.AsyncClient(
+        timeout=SETTINGS.performance.http_timeout,
+        verify=create_ssl_context(),
+    )
     onebot_client_ws: UnifiedWebSocket | None = None
     onebot_server_wss: ClassVar[set[UnifiedWebSocket]] = set()
     pending_tasks: ClassVar[set[asyncio.Task[Any]]] = set()
