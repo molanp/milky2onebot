@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./logo.jpg" width="200" alt="Logo" />
+  <img src="logo.jpg" width="200" alt="Logo" />
   <p><strong>M2Onebot</strong></p>
   <p>一个将Milky协议转换到Onebot协议的程序</p>
   <small>小孩子不懂事写着玩的</small>
