@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
-import logging
 import os
 import ssl
 import time
@@ -16,7 +15,7 @@ import uvicorn
 import websockets
 from websockets import ClientConnection
 
-from .config import APP_LOGGER_NAME, load_config
+from .config import load_config
 from .converters import (
     ACTION_MAP,
     failed,
@@ -25,88 +24,11 @@ from .converters import (
     transform_action_response,
     transform_event_async,
 )
+from .logger import get_logger, setup_logging
 
 SETTINGS = load_config()
-LOGGER = logging.getLogger(f"{APP_LOGGER_NAME}.gateway")
-SILENCED_LOGGERS = (
-    "asyncio",
-    "fastapi",
-    "httpcore",
-    "httpx",
-    "multipart",
-    "starlette",
-    "uvicorn",
-    "uvicorn.access",
-    "uvicorn.error",
-    "websockets",
-)
-
-
-class ColorFormatter(logging.Formatter):
-    COLORS: ClassVar[dict[str, str]] = {
-        "DEBUG": "\033[36m",  # 青色
-        "INFO": "\033[32m",  # 绿色
-        "WARNING": "\033[33m",  # 黄色
-        "ERROR": "\033[31m",  # 红色
-        "CRITICAL": "\033[41m",  # 红底
-    }
-    RESET = "\033[0m"
-
-    def format(self, record: logging.LogRecord) -> str:
-        original_levelname = record.levelname
-        level_name = record.levelname
-        color = self.COLORS.get(level_name, "")
-        record.levelname = f"{color}{level_name}{self.RESET}"
-        try:
-            return super().format(record)
-        finally:
-            record.levelname = original_levelname
-
-
-def setup_logging() -> None:
-    handler = logging.StreamHandler()
-    app_level = getattr(logging, SETTINGS.logging.level.upper(), logging.INFO)
-    handler.setLevel(app_level)
-    formatter_cls = ColorFormatter if SETTINGS.logging.color else logging.Formatter
-    message_format = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
-    if SETTINGS.logging.color:
-        message_format = (
-            "%(asctime)s [%(levelname)s] [%(name)s] \033[37m%(message)s\033[0m"
-        )
-    handler.setFormatter(formatter_cls(message_format))
-
-    app_logger = logging.getLogger(APP_LOGGER_NAME)
-    app_logger.handlers.clear()
-    app_logger.addHandler(handler)
-    app_logger.setLevel(app_level)
-    app_logger.disabled = False
-    app_logger.propagate = False
-
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.addHandler(logging.NullHandler())
-    root_logger.setLevel(logging.CRITICAL + 1)
-
-    for logger_name, logger in logging.root.manager.loggerDict.items():
-        if not isinstance(logger, logging.Logger):
-            continue
-        if logger_name == APP_LOGGER_NAME or logger_name.startswith(
-            f"{APP_LOGGER_NAME}."
-        ):
-            logger.disabled = False
-            continue
-        logger.handlers.clear()
-        logger.propagate = False
-        logger.disabled = True
-
-    for logger_name in SILENCED_LOGGERS:
-        logger = logging.getLogger(logger_name)
-        logger.handlers.clear()
-        logger.propagate = False
-        logger.disabled = True
-
-
-setup_logging()
+LOGGER = get_logger("gateway")
+setup_logging(SETTINGS)
 
 
 def create_ssl_context() -> ssl.SSLContext:
@@ -549,7 +471,7 @@ async def endpoint_onebot_reverse_ws(websocket: WebSocket):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging()
+    setup_logging(SETTINGS)
     bg_tasks = []
     GatewayHub.milky_ready = asyncio.Event()
 

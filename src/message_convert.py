@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import logging
 import re
 from typing import Any, Literal
 
-from .config import APP_LOGGER_NAME
+from .logger import get_logger
 
-LOGGER = logging.getLogger(f"{APP_LOGGER_NAME}.message_convert")
+LOGGER = get_logger("message_convert")
 Json = dict[str, Any]
 MessageIdBuilder = Callable[[Literal["group", "friend", "temp"], int, int], int]
 MessageIdParser = Callable[[int], Json]
