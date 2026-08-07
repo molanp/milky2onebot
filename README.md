@@ -1,22 +1,24 @@
-# milky2onebot
-
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/100ea02c-3c94-42d6-b8a8-149617bd744c" width="200" alt="Logo" />
+  <img src="./logo.jpg" width="200" alt="Logo" />
   <p><strong>M2Onebot</strong></p>
   <p>一个将Milky协议转换到Onebot协议的程序</p>
   <small>小孩子不懂事写着玩的</small>
 </div>
 
-___
+---
 
 本项目基于 Milky 1.2.2 和 Onebot.v11(Lucklilly) 开发
 
 ## 运行
 
-复制示例配置：
+从 [Actions](https://github.com/molanp/milky2onebot/actions/workflows/build.yml) 或 [Release](https://github.com/molanp/milky2onebot/releases) 下载对应平台的构建产物，解压后直接运行。
+
+首次运行会在可执行文件所在目录自动生成 `config.toml`，修改配置后重新启动即可。
+
+## 从源码运行
 
 ```shell
-copy config.example.toml config.toml
+uv run python main.py
 ```
 
 也可以用环境变量指定配置路径：
@@ -25,15 +27,9 @@ copy config.example.toml config.toml
 set M2OB_CONFIG=D:\path\to\config.toml
 ```
 
-```shell
-uv run uvicorn src.gateway:app
-```
-
-~~我以后会打包成二进制的~~
-
 ## 配置
 
-配置文件使用 TOML，默认读取当前工作目录下的 `config.toml`。配置按用途分为：
+配置文件使用 TOML。二进制版本默认读取可执行文件所在目录的 `config.toml`，源码运行默认读取当前工作目录下的 `config.toml`。配置按用途分为：
 
 - `[server]`: 本服务监听地址。
 - `[logging]`: 项目日志级别和颜色。

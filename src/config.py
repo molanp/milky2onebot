@@ -1,14 +1,57 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 import tomllib
 
-DEFAULT_CONFIG_PATH = Path.cwd() / "config.toml"
 APP_LOGGER_NAME = "M2O"
+DEFAULT_CONFIG = """[server]
+host = "127.0.0.1"
+port = 8000
+
+[logging]
+level = "INFO"
+color = true
+
+[milky]
+# 支持: "WEBSOCKET", "SSE", "WEBHOOK"
+mode = "WEBSOCKET"
+host = "127.0.0.1"
+port = 30001
+access_token = ""
+reconnect_interval = 5.0
+
+[onebot]
+# 支持: "WS_CLIENT", "WS_SERVER"
+mode = "WS_CLIENT"
+host = "127.0.0.1"
+port = 8080
+access_token = ""
+reconnect_interval = 5.0
+
+[heartbeat.onebot]
+enabled = true
+interval = 5.0
+
+[heartbeat.milky]
+enabled = false
+interval = 30.0
+
+[performance]
+http_timeout = 10.0
+websocket_max_size = 16777216
+"""
+
+
+def _default_config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "config.toml"
+    return Path.cwd() / "config.toml"
 
 
 @dataclass(frozen=True)
@@ -84,8 +127,9 @@ class AppConfig:
 
 def load_config(path: str | Path | None = None) -> AppConfig:
     config_path = Path(
-        path or os.getenv("M2OB_CONFIG") or DEFAULT_CONFIG_PATH
+        path or os.getenv("M2OB_CONFIG") or _default_config_path()
     ).expanduser()
+    _create_default_config(config_path)
     raw = _read_toml(config_path)
     _apply_env_overrides(raw)
 
@@ -115,8 +159,17 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             }
         ),
         performance=PerformanceConfig(**_section(raw, "performance")),
-        config_path=config_path if config_path.exists() else None,
+        config_path=config_path,
     )
+
+
+def _create_default_config(path: Path) -> None:
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(FileExistsError):
+        with path.open("x", encoding="utf-8", newline="\n") as config_file:
+            config_file.write(DEFAULT_CONFIG)
 
 
 def _read_toml(path: Path) -> dict[str, Any]:

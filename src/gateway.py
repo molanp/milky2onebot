@@ -573,7 +573,7 @@ if SETTINGS.onebot.mode == "WS_SERVER":
     app.add_api_websocket_route("/onebot/v11/ws", endpoint_onebot_reverse_ws)
 
 
-if __name__ == "__main__":
+def main() -> None:
     uvicorn.run(
         app,
         host=SETTINGS.server.host,
@@ -581,3 +581,7 @@ if __name__ == "__main__":
         log_config=None,
         access_log=False,
     )
+
+
+if __name__ == "__main__":
+    main()
