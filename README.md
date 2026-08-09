@@ -7,7 +7,7 @@
 
 ---
 
-本项目基于 Milky 1.2.2 和 Onebot.v11(Lucklilly) 开发
+本项目基于 Milky 1.3.0 和 Onebot.v11(Lucklilly) 开发
 
 ## 运行
 
