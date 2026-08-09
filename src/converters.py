@@ -664,6 +664,11 @@ ACTION_MAP: dict[str, ActionMapping] = {
         "persist_group_file",
         field_map({"group_id": "group_id", "file_id": "file_id"}),
     ),
+    "get_group_file_url": ActionMapping(
+        "get_group_file_url",
+        field_map({"group_id": "group_id", "file_id": "file_id"}),
+        lambda data: {"url": data["download_url"]},
+    ),
 }
 
 
