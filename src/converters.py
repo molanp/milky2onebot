@@ -933,6 +933,15 @@ async def transform_event_async(
             "reason": data["reason"],
             "user_id": self_id,
         }
+    if event_type == "group_disband":
+        return {
+            "time": event_time,
+            "self_id": self_id,
+            "post_type": "notice",
+            "notice_type": "group_dismiss",
+            "group_id": data["group_id"],
+            "user_id": data["operator_id"],
+        }
     return None
 
 
