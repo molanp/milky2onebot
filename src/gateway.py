@@ -26,7 +26,7 @@ from .converters import (
 )
 from .logger import get_logger, setup_logging
 
-VERSION = "0.2.0"
+VERSION = "1.2.0"
 MILKY_VERSION = "1.3.0"
 
 SETTINGS = load_config()
