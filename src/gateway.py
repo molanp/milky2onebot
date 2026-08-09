@@ -26,6 +26,9 @@ from .converters import (
 )
 from .logger import get_logger, setup_logging
 
+VERSION = "0.2.0"
+MILKY_VERSION = "1.3.0"
+
 SETTINGS = load_config()
 LOGGER = get_logger("gateway")
 setup_logging(SETTINGS)
@@ -518,6 +521,7 @@ if SETTINGS.onebot.mode == "WS_SERVER":
 
 
 def main() -> None:
+    LOGGER.info(f"Version: {VERSION} for Milky v{MILKY_VERSION}")
     uvicorn.run(
         app,
         host=SETTINGS.server.host,
