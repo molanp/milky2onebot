@@ -249,9 +249,11 @@ def milky_segment_to_onebot(
             },
         }
     if seg_type == "light_app":
-        return {"type": "json", "data": {"data": data.get("json_payload", "")}}
+        return {"type": "json", "data": {"data": data["json_payload"]}}
     if seg_type == "xml":
-        return {"type": "xml", "data": {"data": data.get("xml_payload", "")}}
+        return {"type": "xml", "data": {"data": data["xml_payload"]}}
+    if seg_type == "markdown":
+        return {"type": "markdown", "data": {"content": data["content"]}}
     if seg_type == "reply":
         if scene and peer_id is not None and data.get("message_seq") is not None:
             reply_id = message_id_builder(scene, peer_id, data["message_seq"])
