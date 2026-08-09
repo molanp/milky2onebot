@@ -660,6 +660,10 @@ ACTION_MAP: dict[str, ActionMapping] = {
     "fetch_custom_face": ActionMapping(
         "get_custom_face_url_list", empty_params, lambda data: [data["urls"]]
     ),
+    "set_group_file_forever": ActionMapping(
+        "persist_group_file",
+        field_map({"group_id": "group_id", "file_id": "file_id"}),
+    ),
 }
 
 
